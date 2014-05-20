@@ -7,7 +7,7 @@ import subprocess
 import argparse
 import shutil
 
-DEBUG = False
+DEBUG = True
 
 def get_output(command, include_stderr=True):
     """Get the output of a command, optionally ignoring stderr"""
@@ -163,7 +163,7 @@ class Git:
 
     @staticmethod
     def _format_revision_arg(revision):
-        return "--revision BASE:{0}".format(revision) if revision else ""
+        return "--revision {0}:HEAD".format(revision) if revision else ""
 
     @classmethod
     def update_from_svn(cls, revision=""):
@@ -199,9 +199,10 @@ class Git:
         results = {}
 
         external_dir = ""
-        output = get_output_lines('git svn show-externals', include_stderr=False)
-
+        #output = get_output_lines('git svn show-externals', include_stderr=False)
+        output = open(".externals", "r")
         for line in output:
+            print("processing %s" % (line))
             match = re.search(r"# (.*)", line)
             if match:
                 # the external dir is a relative dir, but starts with a slash
@@ -209,11 +210,13 @@ class Git:
                 external_dir = re.sub("^/", "", match.group(1))
             elif line:
                 # start array
+                line = re.sub("^/" + external_dir, "", line).strip()
+                if not line: 
+                    continue
                 if not results.has_key(external_dir):
                     results[external_dir] = []
 
                 # NOTE: git-svn prepends the external with external_dir -> undo that
-                line = re.sub("^/" + external_dir, "", line)
                 results[external_dir].append(line.strip())
 
         debug("externals: {0}", str(results))
@@ -302,10 +305,10 @@ class SvnExternal:
         self.rev = ""
 
         prefix_revision = r"(-r\s*(?P<rev1>\d+))?"
-        url = r"(?P<url>.+?)"
+        url = r"(?P<url>.+)"
         suffix_revision = r"(@(?P<rev2>\d+))?"
         path = r"(?P<dir>.+)"
-        external_pattern = re.compile(r"{0}\s*{1}{2}\s+{3}".format(prefix_revision, url, suffix_revision, path))
+        external_pattern = re.compile(r"{0}\s*{1}\s+{2}\s*{3}".format(prefix_revision, path, suffix_revision, url))
 
         matched_pattern = external_pattern.search(external_string)
         if not matched_pattern:
@@ -329,8 +332,8 @@ class SvnExternal:
 
         url = self.url
         scheme_pattern = r"(?P<scheme>(http|https|svn|svn\+ssh|file)://)"
-        server_pattern = r"(?P<server>{0}.+?)/".format(scheme_pattern)
-        full_url_pattern = r"{0}(?P<path>.+)".format(server_pattern)
+        server_pattern = r"(?P<server>{0}.+?)/?".format(scheme_pattern)
+        full_url_pattern = r"{0}(?P<path>.+?)?".format(server_pattern)
 
         if url.startswith("^/"):
             # Relative to the repository root
@@ -351,12 +354,14 @@ class SvnExternal:
 
         # Normalize the path (since .. can also appear in the middle)
         # split apart because normpath turns "//" into "/"
-        matches = re.search(full_url_pattern, url)
+        #debug("matching {0} against {1}", full_url_pattern, url)
+        #matches = re.search(full_url_pattern, url)
 
-        server = matches.group("server")
-        path = os.path.normpath(matches.group("path"))
+        #server = matches.group("server")
+        #path = os.path.normpath(matches.group("path") or "")
 
-        self.url = os.path.join(server, path)
+        #self.url = os.path.join(server, path)
+        self.url = url
         debug("url after normalization and optional scheme change: {0}", self.url)
 
 
@@ -440,6 +445,11 @@ class GitSvnExternal:
         Git.ignore_path(self.ExternalsDir)
         Git.ignore_path(self.local_dir)
 
+    def _latest_svn_rev(self):
+        """grab the latest svn rev from the remote"""
+        info = get_output("svn info {0}".format(self.remote_url))
+        return re.search('^Revision: (?P<rev>\d+)', info, re.M).group('rev')
+
     """do the actual cloning"""
     def clone(self):
         if self.is_excluded():
@@ -450,6 +460,9 @@ class GitSvnExternal:
             self.printMessage(green("skipping existing external"))
             return
 
+        debug("cloning {0} from {1} r{2}", self.local_url, self.remote_url, self.revision)
+        if not self.revision:
+          self.revision = self._latest_svn_rev()
         Git.clone_from_svn(self.remote_url, self.local_url, self.revision)
         self._create_link()
         self._update_excludes()
