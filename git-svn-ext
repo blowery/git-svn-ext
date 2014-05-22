@@ -199,8 +199,8 @@ class Git:
         results = {}
 
         external_dir = ""
-        #output = get_output_lines('git svn show-externals', include_stderr=False)
-        output = open(".externals", "r")
+        output = get_output_lines('git svn show-externals', include_stderr=False)
+        #output = open(".externals", "r")
         for line in output:
             print("processing %s" % (line))
             match = re.search(r"# (.*)", line)
